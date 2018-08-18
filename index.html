@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no"/>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>显示解</title>
+
+    <script type="text/javascript" src="http://api.map.baidu.com/api?v=2.0&ak=zgzILNWKvGCcalQB51SIlDexo7xjoIsr  ">
+        //v2.0版本的引用方式：src="http://api.map.baidu.com/api?v=2.0&ak=您的密钥"
+    </script>
+    <script src="https://cdn.bootcss.com/jquery/3.2.1/jquery.min.js"></script>
+
+    <style type="text/css">
+        html {
+            height: 100%
+        }
+
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0
+        }
+
+        #container {
+            height: 100%
+        }
+    </style>
+</head>
+<body>
+<div id="container"></div>
+<p>输入json文件相对路径:（例如：500点/0818192030_info.json）
+    <span>
+        <input type="text" id="file-name"/>
+        <button id="look" class="btn btn-primary" style="margin-left: 100px;">查看解和对应数据</button>
+        <!--<button id="clear" class="btn btn-danger" style="margin-left: 100px;">只查看数据</button>-->
+    </span>
+</p>
+<table id="table"></table>
+<script type="text/javascript">
+    let map = new BMap.Map("container");  // 创建地图实例
+    let point = new BMap.Point(112.9, 23.4);  // 创建点坐标
+    map.centerAndZoom(point, 10);  // 初始化地图，设置中心点坐标和地图级别
+    map.enableScrollWheelZoom(true);     //开启鼠标滚轮缩放
+
+    function attribute(e) {
+        let p = e.target;
+        alert("marker的位置是 " + p.getPosition().lng + ", " + p.getPosition().lat);
+    }
+
+    // 显示解的连接
+    $('#look').click(function () {
+        var url = "result/" + $('#file-name').val();
+        $.getJSON(url, function (json) {
+            problems = json.problems;
+            for (var i = 0; i < problems.length; ++i) {
+                setOneProblem(problems[i]);
+                // addCircle(json[i].sites);
+            }
+        });
+    });
+
+    function setOneProblem(result) {
+        let COLORS = ["#0984e3", "#e84393", "#00b894"];
+        let data = result.sites;
+        let pointArray = [];
+        let markerArray = [];
+        for (var i = 0; i < result.hosts.length; ++i) {
+            let host = result.hosts[i];
+            let point = new BMap.Point(data[host].lat, data[host].lng);
+            let marker = new BMap.Marker(point); // 创建点
+            let title = "no: " + data[host].no + ", kind: " + data[host].kind;
+            marker.setTitle(title);
+            map.addOverlay(marker);    //增加点
+            pointArray[data[i].no] = point;
+            markerArray[data[i].no] = marker;
+            marker.addEventListener("click", attribute);
+
+            plan = result.plan[host];
+            for (var j = 0; j < plan.tree.length; ++j) {
+                let edge = plan.tree[j];
+                for (var k = 0; k < edge.length - 1; ++k) {
+                    let polylin = new BMap.Polyline([
+                            new BMap.Point(data[edge[k + 1]].lat, data[edge[k + 1]].lng),
+                            new BMap.Point(data[edge[k]].lat, data[edge[k]].lng)],
+                        {strokeColor: COLORS[k], strokeWeight: 4, strokeOpacity: 1}
+                    );
+                    map.addOverlay(polylin);          //增加折线
+                }
+            }
+        }
+
+        map.setViewport(pointArray);      //让所有点在视野范围内
+    }
+
+
+    function addCircle(sites) {
+        let sortByLat = sites.sort(byProperty("lat"));
+        let avgLat = (sortByLat[0].lat + sortByLat.slice(-1)[0].lat) / 2;
+        let sortByLng = sites.sort(byProperty("lng"));
+        let avgLng = (sortByLng[0].lng + sortByLng.slice(-1)[0].lng) / 2;
+        let distance = sites.map(function (x) {
+            return getDistance(x.lat, x.lng, avgLat, avgLng)
+        });
+        distance.sort();
+        let center = new BMap.Point(avgLat, avgLng);
+        let radius = distance.slice(-1)[0] * 1000;
+        let circle = new BMap.Circle(center, radius, {strokeColor: "blue", strokeWeight: 2, strokeOpacity: 0.5}); //创建圆
+        map.addOverlay(circle);
+        console.log(center);
+    }
+
+    function byProperty(prop) {
+        return function (a, b) {
+            return a[prop] - b[prop];
+        }
+    }
+
+    // 方法定义 lat,lng
+    function getDistance(lat1, lng1, lat2, lng2) {
+        var radLat1 = lat1 * Math.PI / 180.0;
+        var radLat2 = lat2 * Math.PI / 180.0;
+        var a = radLat1 - radLat2;
+        var b = lng1 * Math.PI / 180.0 - lng2 * Math.PI / 180.0;
+        var s = 2 * Math.asin(Math.sqrt(Math.pow(Math.sin(a / 2), 2) +
+            Math.cos(radLat1) * Math.cos(radLat2) * Math.pow(Math.sin(b / 2), 2)));
+        s = s * 6378.137;// EARTH_RADIUS;
+        s = Math.round(s * 10000) / 10000;
+        return s;
+    }
+
+</script>
+</body>
+</html>
