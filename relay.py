@@ -346,6 +346,7 @@ class Solution(object):
         for z in self.zones:
             if len(z) == 1:
                 self.un_cover += 1
+                self.sate_num += 1
             else:
                 self.sate_num += math.ceil(len(z) / 8)
 
@@ -1078,6 +1079,9 @@ def solve_problem(problem, population_size, iteration_num):
         log(ga.current_epoch)
         now_fit = ga.avg_fit()
         print(now_fit)
+        if ga.current_epoch <= 30:
+            last_fitness = now_fit
+            continue
         if now_fit > last_fitness:
             last_fitness = now_fit
         elif (now_fit / last_fitness) > 0.999:
@@ -1149,7 +1153,7 @@ def read_data(size):
 
 
 def main():
-    _data = read_data(1000)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
+    _data = read_data(2229)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
 
     _re = algorithm(_data, POPULATION_SIZE, ITERATION_NUM)
 
@@ -1192,8 +1196,8 @@ def experiment(data):
 
 if __name__ == "__main__":
     #  遗传算法参数
-    POPULATION_SIZE = 50  # 种群规模
-    ITERATION_NUM = 50  # 迭代次数
+    POPULATION_SIZE = 30  # 种群规模
+    ITERATION_NUM = 100  # 迭代次数
 
     main()
     # experiment(read_data(500))
