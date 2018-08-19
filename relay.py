@@ -122,6 +122,9 @@ class Solution(object):
         self.info = ""
         self.can = False
         self.avg_loss = 0
+        self.sate_num = 0
+        self.un_cover = 0
+        self.all_cost = 0
 
     def show_tree(self, host_id):
         if host_id in self.hosts:
@@ -154,6 +157,7 @@ class Solution(object):
                 self.DR[i][j] = fan(self.DD[i][j]) * fan(self.RR[i][j])
 
         self.create_tree()
+        self.create_zone(set(self.hosts))
         return
 
     def connect_preset(self, unset, length_before, preset_hosts):  # 按照最近原则  todo 待优化
@@ -293,26 +297,65 @@ class Solution(object):
 
         return self
 
-    def zone_num(self):  # 直接返回片区数量
-        self.zones = []
-        flag = 0
-        for i in self.hosts:
+    def create_zone(self, unset):
+        for h in self.hosts:
+            if h not in unset:
+                continue
             for z in self.zones:
-                for j in z:
-                    if j in self.SITES[i].dis0_50:
-                        z.append(int(i))
-                        flag = 1
-                        break
-                if flag:
+                intersection = set(self.SITES[h].dis0_50) & set(z)
+                if len(intersection) > 0:
+                    z.append(h)
+                    can_set = set(self.SITES[h].dis0_50) & unset
+                    for i in can_set:
+                        z.append(i)
+                        unset.remove(i)
+                    unset.remove(h)
                     break
             else:
-                self.zones.append([int(i)])
+                _z = list()
+                _z.append(h)
+                can_set = set(self.SITES[h].dis0_50) & unset
+                for i in can_set:
+                    _z.append(i)
+                    unset.remove(i)
+                self.zones.append(_z)
 
-        return len(self.zones)
+        while True:
+            len_before = len(self.zones)
+            change = False
+            for index in range(1, len_before):
+                for j in self.zones[index - 1]:
+                    intersection = set(self.SITES[j].dis0_50) & set(self.zones[index])
+                    if len(intersection) > 0:
+                        new_z = list(set(self.zones[index - 1]) | set(self.zones[index]))
+                        self.zones[index - 1] = new_z
+                        self.zones.pop(index)
+                        index -= 1
+                        change = True
+                        break
+                if change:
+                    break
+            if len_before == len(self.zones):
+                break
+        return
+
+    def satellite_num(self):  # todo
+        # num = math.ceil(len(self.zones))  TODO zones里宿主总数会变少
+        # if len(self.hosts) > 20:
+        #     print(0)
+        for z in self.zones:
+            if len(z) == 1:
+                self.un_cover += 1
+            else:
+                self.sate_num += math.ceil(len(z) / 8)
+
+        num = self.sate_num
+        return num
 
     def sites_cost(self):
-        satellite = math.ceil(self.zone_num() / 8)
-        return len(self.hosts) * 10 + len(self.children) * 5 + satellite * 50
+        satellite = self.satellite_num()
+        self.all_cost = len(self.hosts) * 10 + len(self.children) * 5 + satellite * 50
+        return self.all_cost
 
     # 计算i->j的路径损耗矩阵，返回系统平均损耗  有warning
     def path_loss(self):
@@ -587,6 +630,8 @@ class Pre(object):
     @classmethod
     @func_timer
     def process_data(cls, data):
+        cls.SUB_PROBLEMS = list()
+        cls.ALL_SITES = list()
         cls.ALL_NUM = len(data)
         cls.PRE_DIS = np.zeros([cls.ALL_NUM, cls.ALL_NUM], dtype=float)
         lat1 = np.zeros([cls.ALL_NUM, cls.ALL_NUM], dtype=float)
@@ -686,6 +731,9 @@ class Pre(object):
         _total_len = 0
         _host_num = 0
         _zone_num = 0
+        _un_cover = 0
+        _sate_num = 0
+        total_cost = 0
 
         for _ga in gas:
             _re = dict()
@@ -714,10 +762,14 @@ class Pre(object):
             _total_len += len(_sol.children)
             _host_num += len(_re["hosts"])
             _zone_num += len(_re["zones"])
+            _sate_num += _sol.sate_num
+            _un_cover += _sol.un_cover
+            total_cost += _sol.all_cost
 
         path_loss = _total_loss / _total_len
-        total_cost = cls.ALL_NUM * 5 + _host_num * 5 + math.ceil(_zone_num / 8) * 50
-        return total_cost, path_loss, result, gas
+        total_host_num = len(np.where(cls.CHOOSE == 1)[0])
+        # total_cost = cls.ALL_NUM * 5 + _host_num * 5 + _sate_num * 50
+        return total_cost, path_loss, result, gas, total_host_num, _un_cover, _sate_num
 
     @classmethod
     def _prim(cls, zone):  # todo
@@ -752,14 +804,17 @@ class Pre(object):
         posi = []
         for i in range(cls.ALL_NUM):
             posi.append([cls.ALL_SITES[i].name, cls.CHOOSE[i]])
-        save_csv(posi, "Posi")
+        p = save_csv(posi, "Posi")
         graph = []
+        names = [" ", ]
         for i in range(cls.ALL_NUM):
             row = cls.CONNECT[i].tolist()
             row.insert(0, cls.ALL_SITES[i].name)
             graph.append(row)
-        save_csv(graph, "Graph")
-        return
+            names.append(cls.ALL_SITES[i].name)
+        graph.insert(0, names)
+        g = save_csv(graph, "Graph")
+        return p + "  " + g
 
     # 计算distance(i,j)矩阵
     @staticmethod
@@ -786,16 +841,89 @@ class Pre(object):
             y = 4 * x * (1 - x)
         return _chaotic_sequence
 
+    @classmethod
+    def ex_summary_results(cls, gas, size, ex_time):
+        ex_result = []
+        cls.CHOOSE = np.zeros(cls.ALL_NUM, int)
+        cls.CONNECT = np.zeros([cls.ALL_NUM, cls.ALL_NUM], int)
+        _total_loss = 0
+        _total_len = 0
+        _host_num = 0
+        _zone_num = 0
+        _un_cover = 0
+        _sate_num = 0
+        total_cost = 0
+
+        for _ga in gas:
+            _sol = _ga.population[0].solution
+            for _z in _sol.zones:
+                cls._prim(list(map(lambda x: _ga.problem.SITES[x].id, _z)))
+            for _h, _plan in _sol.plan.items():
+                cls.CHOOSE[int(_ga.problem.SITES[_h].id)] = 1
+                _tree = _plan["tree"]
+                for _edge in _tree:
+                    for i in range(1, len(_edge)):
+                        cls.CONNECT[int(_ga.problem.SITES[_edge[i]].id), int(_ga.problem.SITES[_edge[i - 1]].id)] = 1
+            _total_loss += float(_sol.avg_loss) * len(_sol.children)
+            _total_len += len(_sol.children)
+            _host_num += len(_sol.hosts)
+            _zone_num += len(_sol.zones)
+            _sate_num += _sol.sate_num
+            _un_cover += _sol.un_cover
+            total_cost += _sol.all_cost
+
+        path_loss = _total_loss / _total_len
+        total_host_num = len(np.where(cls.CHOOSE == 1)[0])
+        # total_cost = cls.ALL_NUM * 5 + _host_num * 5 + _sate_num * 50
+        name = cls.save_file()
+        ex_result.append([ex_time, total_cost, path_loss, total_host_num, _un_cover, _sate_num, name])
+        print("钱 ", total_cost, "， 损耗 ", path_loss, "， 宿主数 ", total_host_num, "， 未覆盖 ",
+              _un_cover, "， 卫星 ", _sate_num, "文件 ", name)
+
+        # 然后计算剩余的
+        for i in range(1, size):
+            _total_loss = 0
+            _total_len = 0
+            _host_num = 0
+            _zone_num = 0
+            _un_cover = 0
+            _sate_num = 0
+            total_cost = 0
+            cls.CHOOSE = np.zeros(cls.ALL_NUM, int)
+            cls.CONNECT = np.zeros([cls.ALL_NUM, cls.ALL_NUM], int)
+            for _ga in gas:
+                _sol = _ga.population[i].solution
+                # for _z in _sol.zones:
+                #     cls._prim(list(map(lambda x: _ga.problem.SITES[x].id, _z)))
+                for _h, _plan in _sol.plan.items():
+                    cls.CHOOSE[int(_ga.problem.SITES[_h].id)] = 1
+                    _tree = _plan["tree"]
+                    for _edge in _tree:
+                        for i in range(1, len(_edge)):
+                            cls.CONNECT[
+                                int(_ga.problem.SITES[_edge[i]].id), int(_ga.problem.SITES[_edge[i - 1]].id)] = 1
+                _total_loss += float(_sol.avg_loss) * len(_sol.children)
+                _total_len += len(_sol.children)
+                _host_num += len(_sol.hosts)
+                _zone_num += len(_sol.zones)
+                _sate_num += _sol.sate_num
+                _un_cover += _sol.un_cover
+                total_cost += _sol.all_cost
+            path_loss = _total_loss / _total_len
+            total_host_num = len(np.where(cls.CHOOSE == 1)[0])
+            ex_result.append([ex_time, total_cost, path_loss, total_host_num, _un_cover, _sate_num, " "])
+
+        return ex_result
+
 
 class Individual(object):  # todo 基因与预设之间的关系
     def __init__(self, solution):
         self.solution = solution
-        self.cross_rate = 0
-        self.mutation_rate = 0.02  # 变异概率范围：0.01~0.4
+        self.mutation_rate = 0.3  # 变异概率
         self.fitness = 0
         self.gene = self.solution.choose.tolist()
 
-    def compute_fitness(self, a=1, b=0.5):
+    def compute_fitness(self, a=1, b=0):
         eva_para = self.solution.evaluate()
         self.fitness = a * eva_para[0] + b * eva_para[1]
         return
@@ -821,7 +949,7 @@ class GeneticAlgorithm(object):
         self.current_epoch = 0
         self.Chaotic_sequence = []
 
-    @func_timer
+    # @func_timer
     def generating_initial_population(self, size):
         self.population_size = size
         self.create_chaotic_sequence()
@@ -845,19 +973,46 @@ class GeneticAlgorithm(object):
         self.Chaotic_sequence = _chaotic_sequence
         return
 
-    def _cross(self):
+    def chaotic_seq(self, step):
+        _chaotic_sequence = []
+        _chaotic_number = my_random()
+        y = _chaotic_number
+        for _c in range(step):
+            x = y
+            _chaotic_sequence.append(int((x * self.problem.NUM)))
+            y = 4 * x * (1 - x)
+        return _chaotic_sequence
+
+    def _cross(self, sim=0.6):
         _pop = self.population
-        _cha = self.Chaotic_sequence[self.current_epoch]
+        seq = self.chaotic_seq(self.population_size * 5)
         for i in range(0, self.population_size, 2):
             _cos_sim = get_cosine_similarity(_pop[i].solution.choose, _pop[i + 1].solution.choose)  # 余弦相似度
-            if _cos_sim < 0.6:  # todo 阈值调整
-                _pop[i].gene[_cha], _pop[i + 1].gene[_cha] = _pop[i + 1].gene[_cha], _pop[i].gene[_cha]
+            if _cos_sim < sim:  # todo 阈值调整
+                # print(_pop[i].gene)
+                a = seq[i]
+                b = seq[i + 1]
+                if a > b:
+                    a, b = b, a
+                for pos in range(a, b, 1):
+                    _pop[i].gene[pos], _pop[i + 1].gene[pos] = _pop[i + 1].gene[pos], _pop[i].gene[pos]
+                # print(self.population[i].gene)
+                # print(0)
+
         return
 
     def _mutation(self):
         for ind in self.population:
-            if ind.will_change():
-                ind.update_itself(self.problem)  # todo 变异策略和能变异的体现
+            if True:  # ind.will_change():
+                _sol = ind.solution
+                for host in ind.solution.hosts:
+                    _num = 4 if _sol.SITES[host].kind == 1 else 2
+                    if _sol.plan[host]["sonNum"] < _num:
+                        near_host = sorted(set(_sol.SITES[host].dis0_50) & set(_sol.hosts),
+                                           key=lambda x: _sol.DIS[x, host])
+                        if len(near_host) > 0:
+                            ind.gene[host] = 0
+                            ind.gene[near_host[0]] = 0
         return
 
     def _grow(self):
@@ -867,15 +1022,19 @@ class GeneticAlgorithm(object):
         return
 
     def _select(self):
-        elites_num = int(self.population_size * 0.1)
+        elites_num = int(self.population_size * 0.3)
         _temp_pop = self.previous_pop[:elites_num]
         _temp_pop += self.population[:self.population_size - elites_num]
         self.population = sorted(_temp_pop, key=lambda x: x.fitness)
         return
 
-    def run_one_time(self):
+    def avg_fit(self):
+        fit = sum(map(lambda x: x.fitness, self.population)) / self.population_size
+        return fit
+
+    def run_one_time(self, sim):
         self.previous_pop = copy.deepcopy(self.population)
-        self._cross()
+        self._cross(sim)
         self._mutation()
         self._grow()
         self._select()  # 精英策略
@@ -910,14 +1069,36 @@ def solve_problem(problem, population_size, iteration_num):
 
     ga = GeneticAlgorithm(problem)
     ga.generating_initial_population(population_size)
-    last_fitness = ga.population[0].fitness
+    init_fit = ga.avg_fit()
+    last_fitness = init_fit
+    sim = 0.6
     while ga.current_epoch < iteration_num:
-        ga.run_one_time()
+        ga.run_one_time(sim)
+        sim = 0.6
         log(ga.current_epoch)
-        if (ga.population[0].fitness / last_fitness) > 0.999:
-            break
+        now_fit = ga.avg_fit()
+        print(now_fit)
+        if now_fit > last_fitness:
+            last_fitness = now_fit
+        elif (now_fit / last_fitness) > 0.999:
+            if now_fit > init_fit:
+                last_fitness = now_fit
+                sim = 0.2
+                continue
+            else:
+                break
+        else:
+            last_fitness = now_fit
 
     host_num = len(ga.population[0].solution.hosts)
+
+    ho_list = []
+    for ho in ga.population[0].solution.hosts:
+        num = 4 if ga.population[0].solution.SITES[ho].kind == 1 else 2
+        if ga.population[0].solution.plan[ho]["sonNum"] < num:
+            ho_list.append(ho)
+    print("num:", len(ho_list), " :", ho_list)
+
     path_adjust_num = 1
     for i in range(int(host_num / 2)):
         ch = ga.population[0].solution.adjust_between_group()
@@ -938,12 +1119,8 @@ def solve_problem(problem, population_size, iteration_num):
 
 
 @func_timer
-def algorithm(population_size=20, iteration_num=10, data=None):
-    if data is None:
-        _data = read_data(500)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
-    else:
-        _data = data
-    Pre.process_data(_data)
+def algorithm(data, population_size=20, iteration_num=10):
+    Pre.process_data(data)
     ga_list = list()
     # pool = multiprocessing.Pool(processes=2)
     for sub_problem in Pre.SUB_PROBLEMS:
@@ -955,7 +1132,7 @@ def algorithm(population_size=20, iteration_num=10, data=None):
 
 def read_data(size):
     data = list()
-    wb = xlrd.open_workbook("B题测试数据.xlsx")
+    wb = xlrd.open_workbook("B题测试数据-更新.xlsx")
     sheet = wb.sheets()[0]
 
     for i in range(size):
@@ -963,29 +1140,63 @@ def read_data(size):
         name = str(sheet.cell_value(row, 0))
         lng = float(sheet.cell_value(row, 1))
         lat = float(sheet.cell_value(row, 2))
+        kind_name = str(sheet.cell_value(row, 3))
+        kind = 1 if kind_name == "Butterfly Site" else 0
         data.append({"lat": lat, "lng": lng, "site_name": name,
-                     "kind": 1, "preset": False})  # random.randint(0, 1)
+                     "kind": kind, "preset": False})  # random.randint(0, 1)
 
     return data
 
 
-if __name__ == "__main__":
-    #  遗传算法参数
-    POPULATION_SIZE = 30  # 种群规模
-    ITERATION_NUM = 10  # 迭代次数
+def main():
+    _data = read_data(1000)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
 
-    re = algorithm(POPULATION_SIZE, ITERATION_NUM)
+    _re = algorithm(_data, POPULATION_SIZE, ITERATION_NUM)
 
-    log("total_cost: " + str(re[0]) + ", path_loss: " + str(re[1]))
+    log("total_cost: " + str(_re[0]) + ", path_loss: " + str(_re[1]))
+    print("host_num: ", _re[4], "  uncover num: ", _re[5], "  sate num: ", _re[6])
 
     total_result = dict()
-    total_result["problems"] = re[2]
-    total_result["total_cost"] = re[0]
-    total_result["path_loss"] = re[1]
+    total_result["total_cost"] = _re[0]
+    total_result["path_loss"] = _re[1]
+    total_result["host_num"] = _re[4]
+    total_result["un_cover_num"] = _re[5]
+    total_result["sate_num"] = _re[6]
+    total_result["problems"] = _re[2]
     Pre.save_file()
     save_json(total_result)
 
-    log()
+    return
+
+
+def one_experiment(data, i, size):
+    Pre.process_data(data)
+    ga_list = []
+    for problem in Pre.SUB_PROBLEMS:
+        ga = GeneticAlgorithm(problem)
+        ga.generating_initial_population(size)
+        ga_list.append(ga)
+    res = Pre.ex_summary_results(ga_list, size, i + 1)
+    del ga_list
+    return res
+
+
+def experiment(data):
+    res = list()
+    res.append(["第x次生成实验", "总体成本", "平均损耗", "宿主站数", "未覆盖数", "卫星数", "文件名"])
+
+    for i in range(20):
+        res += one_experiment(data, i, 30)
+    save_csv(res, "实验结果汇总")
+
+
+if __name__ == "__main__":
+    #  遗传算法参数
+    POPULATION_SIZE = 50  # 种群规模
+    ITERATION_NUM = 50  # 迭代次数
+
+    main()
+    # experiment(read_data(500))
 
 '''
 TODO 多进程并行计算
