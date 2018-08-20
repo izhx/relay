@@ -145,6 +145,9 @@ def convert2csu():
         for j in range(NUM):
             if _graph[i + 1][j + 1] == '1':
                 CONNECT[i, j] = 1
+            elif _graph[i + 1][j + 1] == '2':
+                if DIS[i][j] > 50:
+                    log("微波连接(" + str(i + 1) + "," + str(j + 1) + ")大于50")
 
     for i in range(0, NUM):
         dis0_50 = list(map(lambda x: int(x), set(np.where(DIS[i] <= 50)[0])))
