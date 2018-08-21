@@ -124,6 +124,7 @@ def check_constraint():
     log(info)
 
 
+@func_timer
 def convert2csu():
     global DIS
     lat1 = np.zeros([NUM, NUM], dtype=float)
@@ -181,5 +182,5 @@ if __name__ == '__main__':
 
 '''
 三个文件名可以输入相对路径或者绝对路径，
-程序只能检测无线回传的约束，对于微波连接暂无检测
+程序只能检测无线回传的约束，对于微波连接只有50km约束
 '''

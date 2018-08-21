@@ -1153,7 +1153,7 @@ def read_data(size):
 
 
 def main():
-    _data = read_data(2229)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
+    _data = read_data(1000)  # get_random_data(2229)  # 112.9, 114.4, 22.5, 23.4
 
     _re = algorithm(_data, POPULATION_SIZE, ITERATION_NUM)
 
